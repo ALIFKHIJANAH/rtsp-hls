@@ -2,6 +2,7 @@
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 import subprocess
 import os
 
@@ -21,9 +22,14 @@ app.add_middleware(
 HLS_DIR = "hls"
 os.makedirs(HLS_DIR, exist_ok=True)
 
+# Pydantic model for request body
+class ConvertRequest(BaseModel):
+    rtsp_url: str
+
 @app.post("/convert/")
-async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, rtsp_url: str ="rtsp://192.168.1.105:8554/stream"):
-    stream_id =hash(rtsp_url)
+async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: ConvertRequest):
+    rtsp_url = request.rtsp_url
+    stream_id = hash(rtsp_url)
 
     if stream_id < 0:
         stream_id=stream_id*-1
@@ -32,7 +38,7 @@ async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, rtsp_url: str =
 
     background_tasks.add_task(run_ffmpeg, rtsp_url, stream_dir)
 
-    hls_url = f"http://127.0.0.1:8000/hls/{stream_id}/index.m3u8"
+    hls_url = f"http://103.76.121.232:8000/hls/{stream_id}/index.m3u8"
     return {"hls_url": hls_url}
 
 def run_ffmpeg(rtsp_url, output_dir):
