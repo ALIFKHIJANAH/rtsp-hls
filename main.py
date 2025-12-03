@@ -45,7 +45,7 @@ async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: Conver
 
     # Use environment variable for host or default to localhost
     host = os.getenv('HOST_URL', 'localhost:8000')
-    hls_url = f"http://{host}/hls/{stream_id}/index.m3u8"
+    hls_url = f"https://{host}/hls/{stream_id}/index.m3u8"
     return {"hls_url": hls_url}
 
 def run_ffmpeg(rtsp_url, output_dir):
