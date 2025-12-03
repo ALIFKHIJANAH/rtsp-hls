@@ -11,11 +11,14 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt* ./
-RUN pip install --no-cache-dir fastapi uvicorn
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY . .
+
+# Make start script executable
+RUN chmod +x start.sh
 
 # Create HLS directory for output files
 RUN mkdir -p hls
@@ -32,9 +35,9 @@ RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app
 USER app
 
-# Health check
+# Health check using Python instead of curl
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/docs || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]

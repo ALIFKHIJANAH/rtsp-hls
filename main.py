@@ -22,6 +22,11 @@ app.add_middleware(
 HLS_DIR = "hls"
 os.makedirs(HLS_DIR, exist_ok=True)
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "RTSP2HLS service is running"}
+
 # Pydantic model for request body
 class ConvertRequest(BaseModel):
     rtsp_url: str
@@ -38,7 +43,9 @@ async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: Conver
 
     background_tasks.add_task(run_ffmpeg, rtsp_url, stream_dir)
 
-    hls_url = f"http://103.76.121.232:8000/hls/{stream_id}/index.m3u8"
+    # Use environment variable for host or default to localhost
+    host = os.getenv('HOST_URL', 'localhost:8000')
+    hls_url = f"http://{host}/hls/{stream_id}/index.m3u8"
     return {"hls_url": hls_url}
 
 def run_ffmpeg(rtsp_url, output_dir):
@@ -47,7 +54,7 @@ def run_ffmpeg(rtsp_url, output_dir):
         '-loglevel', 'debug',
         # '-rtsp_transport', 'tcp',
         '-i', rtsp_url,
-
+        '-t', '30',         # Limit recording to 30 seconds
         '-vsync', '0',       # Disable video sync
         '-copyts',          # Copy timestamps from input to output
         '-vcodec', 'copy',  # Copy codec
@@ -71,4 +78,5 @@ app.mount("/hls", StaticFiles(directory=HLS_DIR), name="hls")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
