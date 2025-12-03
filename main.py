@@ -23,6 +23,18 @@ HLS_DIR = "hls"
 os.makedirs(HLS_DIR, exist_ok=True)
 
 # Health check endpoint
+@app.get("/")
+async def root():
+    return {
+        "message": "RTSP to HLS Converter Service", 
+        "version": "1.0.0",
+        "endpoints": {
+            "health": "/health",
+            "convert": "POST /convert/",
+            "docs": "/docs"
+        }
+    }
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "message": "RTSP2HLS service is running"}
@@ -30,6 +42,22 @@ async def health_check():
 # Pydantic model for request body
 class ConvertRequest(BaseModel):
     rtsp_url: str
+
+@app.get("/convert/")
+async def convert_info():
+    return {
+        "message": "RTSP to HLS Conversion Endpoint",
+        "method": "POST",
+        "required_payload": {
+            "rtsp_url": "string - The RTSP stream URL to convert"
+        },
+        "example": {
+            "rtsp_url": "rtsp://example.com:554/stream"
+        },
+        "response": {
+            "hls_url": "The URL of the generated HLS playlist"
+        }
+    }
 
 @app.post("/convert/")
 async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: ConvertRequest):
@@ -45,7 +73,8 @@ async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: Conver
 
     # Use environment variable for host or default to localhost
     host = os.getenv('HOST_URL', 'localhost:8000')
-    hls_url = f"https://{host}/hls/{stream_id}/index.m3u8"
+    protocol = "https" if "dokploy" in host or "." in host else "http"
+    hls_url = f"{protocol}://{host}/hls/{stream_id}/index.m3u8"
     return {"hls_url": hls_url}
 
 def run_ffmpeg(rtsp_url, output_dir):
