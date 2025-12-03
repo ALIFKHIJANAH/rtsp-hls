@@ -21,7 +21,7 @@ COPY . .
 RUN chmod +x start.sh
 
 # Create HLS directory for output files
-RUN mkdir -p hls
+RUN mkdir -p hls && chmod 755 hls
 
 # Expose the port that the app runs on
 EXPOSE 8000
@@ -32,7 +32,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 # Create a non-root user for security
 RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+    && chown -R app:app /app \
+    && chmod -R 755 /app/hls
 USER app
 
 # Health check using Python instead of curl

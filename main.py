@@ -20,7 +20,15 @@ app.add_middleware(
     allow_headers=["*"]
 )
 HLS_DIR = "hls"
-os.makedirs(HLS_DIR, exist_ok=True)
+# Create directory with error handling for Docker environments
+try:
+    os.makedirs(HLS_DIR, exist_ok=True)
+    os.chmod(HLS_DIR, 0o755)
+except PermissionError:
+    # If we can't set permissions (like in Docker), continue anyway
+    print(f"Warning: Could not set permissions on {HLS_DIR}, continuing...")
+    if not os.path.exists(HLS_DIR):
+        os.makedirs(HLS_DIR, exist_ok=True)
 
 # Health check endpoint
 @app.get("/")
@@ -37,7 +45,22 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "message": "RTSP2HLS service is running"}
+    # Check if HLS directory is writable
+    try:
+        test_file = f"{HLS_DIR}/.health_test"
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        hls_status = "writable"
+    except Exception as e:
+        hls_status = f"not writable: {str(e)}"
+    
+    return {
+        "status": "healthy", 
+        "message": "RTSP2HLS service is running",
+        "hls_directory": hls_status,
+        "hls_path": os.path.abspath(HLS_DIR)
+    }
 
 # Pydantic model for request body
 class ConvertRequest(BaseModel):
@@ -62,12 +85,20 @@ async def convert_info():
 @app.post("/convert/")
 async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: ConvertRequest):
     rtsp_url = request.rtsp_url
-    stream_id = hash(rtsp_url)
-
-    if stream_id < 0:
-        stream_id=stream_id*-1
+    stream_id = abs(hash(rtsp_url))  # Always positive
     stream_dir = f"{HLS_DIR}/{stream_id}"
-    os.makedirs(stream_dir, exist_ok=True)
+    
+    # Ensure stream directory exists with proper permissions
+    try:
+        os.makedirs(stream_dir, exist_ok=True)
+        os.chmod(stream_dir, 0o755)
+        # Test write permissions
+        test_file = f"{stream_dir}/.test"
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cannot create output directory: {str(e)}")
 
     background_tasks.add_task(run_ffmpeg, rtsp_url, stream_dir)
 
@@ -78,29 +109,65 @@ async def convert_rtsp_to_hls(background_tasks: BackgroundTasks, request: Conver
     return {"hls_url": hls_url}
 
 def run_ffmpeg(rtsp_url, output_dir):
+    # Ensure output directory exists and is writable
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        os.chmod(output_dir, 0o755)
+    except PermissionError:
+        # Continue if we can't set permissions (Docker environment)
+        print(f"Warning: Could not set permissions on {output_dir}")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+    
+    output_file = f'{output_dir}/index.m3u8'
+    
     cmd = [
         'ffmpeg',
-        '-loglevel', 'debug',
-        # '-rtsp_transport', 'tcp',
+        '-y',  # Overwrite output files
+        '-loglevel', 'info',  # Reduce log verbosity
+        '-rtsp_transport', 'tcp',  # Use TCP for better reliability
         '-i', rtsp_url,
         '-t', '30',         # Limit recording to 30 seconds
-        '-vsync', '0',       # Disable video sync
-        '-copyts',          # Copy timestamps from input to output
-        '-vcodec', 'copy',  # Copy codec
+        '-c:v', 'libx264',  # Use h264 encoder instead of copy
+        '-preset', 'veryfast',  # Fast encoding
+        '-crf', '23',       # Good quality
+        '-maxrate', '1M',   # Max bitrate
+        '-bufsize', '2M',   # Buffer size
+        '-g', '50',         # GOP size
+        '-sc_threshold', '0',  # Disable scene detection
+        '-an',              # No audio
+        '-f', 'hls',        # HLS format
+        '-hls_time', '2',   # Segment duration
+        '-hls_list_size', '0',  # Keep all segments
         '-hls_segment_type', 'mpegts',
-        '-movflags', 'frag_keyframe+empty_moov',
-        '-an',
-        # '-hls_flags', 'delete_segments+append_list'
-        '-f', 'hls',         # HLS format
-        '-hls_time', '2',    # Segment duration
-        '-hls_list_size', '3',
-        '-hls_segment_type', 'mpegts',
-        f'{output_dir}/index.m3u8'
+        '-hls_flags', 'delete_segments+append_list',  # Clean up old segments
+        output_file
     ]
+    
+    print(f"Starting FFmpeg for stream: {rtsp_url}")
+    print(f"Output directory: {output_dir}")
+    print(f"Command: {' '.join(cmd)}")
+    
     try:
-        subprocess.run(cmd, check=True)
+        # Run with timeout and capture output
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            timeout=60,  # 60 second timeout
+            check=True
+        )
+        print(f"FFmpeg completed successfully for {output_file}")
+        print(f"FFmpeg stdout: {result.stdout}")
+    except subprocess.TimeoutExpired:
+        print(f"FFmpeg timeout for {rtsp_url}")
     except subprocess.CalledProcessError as e:
-        print(f"An error occurred: {e.stderr}")
+        print(f"FFmpeg error for {rtsp_url}:")
+        print(f"Return code: {e.returncode}")
+        print(f"stdout: {e.stdout}")
+        print(f"stderr: {e.stderr}")
+    except Exception as e:
+        print(f"Unexpected error running FFmpeg: {str(e)}")
 
 # Serve HLS segments and playlist
 app.mount("/hls", StaticFiles(directory=HLS_DIR), name="hls")
